@@ -7,9 +7,7 @@
 
 #include "flash.h"
 #include "flash_internal.h"
-#ifdef HOPPER
-  #include "../hopper/flash_fwd_launch_template.h"
-#endif
+#include "../hopper/flash_fwd_launch_template.h"
 
 namespace flash_attn {
 
@@ -23,55 +21,33 @@ inline void _assert(bool result, const char* const file, int const line,
 
 #define CHECK(val) _assert(val, __FILE__, __LINE__)
 
+// Template declaration for SM80 kernels
+template<int Arch, typename T, int kHeadDim, int kHeadDimV, bool Split, bool PagedKVNonTMA, bool Has_softcap, bool PackGQA>
+void run_mha_fwd_(Flash_fwd_params &params, cudaStream_t stream);
+
 void run(Flash_fwd_params params, cudaStream_t stream) {
   int device;
   cudaGetDevice(&device);
   int major, minor;
   cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device);
   cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device);
-  params.sm = major * 10 + minor;
-  bool is_local = (params.window_size_left >= 0 || params.window_size_right >= 0) && !params.is_causal;
+  params.arch = major * 10 + minor;
 
-  if (params.sm >= 90 && (params.d == 64 || params.d == 128 || params.d == 256) && !is_local) {
-    if (params.is_e4m3) {
-      if (params.d == 64) {
-        flash3::run_mha_fwd_<cutlass::float_e4m3_t, 64>(params, stream);
-      } else if (params.d == 128) {
-        flash3::run_mha_fwd_<cutlass::float_e4m3_t, 128>(params, stream);
-      } else if (params.d == 256) {
-        flash3::run_mha_fwd_<cutlass::float_e4m3_t, 256>(params, stream);
-      }
-    } else {
-      if (params.d == 64) {
-        flash3::run_mha_fwd_<cutlass::half_t, 64>(params, stream);
-      } else if (params.d == 128) {
-        flash3::run_mha_fwd_<cutlass::half_t, 128>(params, stream);
-      } else {
-        flash3::run_mha_fwd_<cutlass::half_t, 256>(params, stream);
-      }
-    }
+  // For SM80, we only support FP16 currently
+  // Template params: <Arch, T, kHeadDim, kHeadDimV, Split, PagedKVNonTMA, Has_softcap, PackGQA>
+  assert(params.is_e4m3 == false);
+  auto head_dim = params.d;
+  if (head_dim <= 64) {
+    run_mha_fwd_<80, cutlass::half_t, 64, 64, false, false, false, true>(params, stream);
+  } else if (head_dim <= 96) {
+    run_mha_fwd_<80, cutlass::half_t, 96, 96, false, false, false, true>(params, stream);
+  } else if (head_dim <= 128) {
+    run_mha_fwd_<80, cutlass::half_t, 128, 128, false, false, false, true>(params, stream);
+  } else if (head_dim <= 192) {
+    run_mha_fwd_<80, cutlass::half_t, 192, 192, false, false, false, true>(params, stream);
   } else {
-    assert(params.is_e4m3 == false);
-    auto head_dim = params.d;
-    if (head_dim <= 32) {
-      run_mha_fwd_<half, 32>(params, stream);
-    } else if (head_dim <= 64) {
-      run_mha_fwd_<half, 64>(params, stream);
-    } else if (head_dim <= 96) {
-      run_mha_fwd_<half, 96>(params, stream);
-    } else if (head_dim <= 128) {
-      run_mha_fwd_<half, 128>(params, stream);
-    } else if (head_dim <= 160) {
-      run_mha_fwd_<half, 160>(params, stream);
-    } else if (head_dim <= 192) {
-      run_mha_fwd_<half, 192>(params, stream);
-    } else if (head_dim <= 224) {
-      run_mha_fwd_<half, 224>(params, stream);
-    } else {
-      run_mha_fwd_<half, 256>(params, stream);
-    }
+    run_mha_fwd_<80, cutlass::half_t, 256, 256, false, false, false, true>(params, stream);
   }
-
 }
 
 Flash_fwd_params get_fwd_params(half* q_ptr, half* k_ptr, half* v_ptr, half* output_ptr,
@@ -104,7 +80,7 @@ Flash_fwd_params get_fwd_params(half* q_ptr, half* k_ptr, half* v_ptr, half* out
   const int seqlen_q_rounded = round_multiple(seqlen_q, 128);
   const int seqlen_k_rounded = round_multiple(seqlen_k, 128);
 
-  Flash_fwd_params params;
+  Flash_fwd_params params = {};  // Zero-initialize all fields
   params.q_ptr = q_ptr;
   params.k_ptr = k_ptr;
   params.v_ptr = v_ptr;
@@ -115,24 +91,27 @@ Flash_fwd_params get_fwd_params(half* q_ptr, half* k_ptr, half* v_ptr, half* out
   // See https://github.com/Dao-AILab/flash-attention/blob/92dd5703ecdb99aa4a4aee9817f28557907403a2/csrc/flash_attn/flash_api.cpp#L111-L116
   // for this logic
   params.is_causal = window_size_left < 0 && window_size_right == 0;
+  params.is_local = !params.is_causal && (window_size_left >= 0 || window_size_right >= 0);
   if (window_size_left < 0 && window_size_right >= 0) { window_size_left = seqlen_k; }
   if (window_size_left >= 0 && window_size_right < 0) { window_size_right = seqlen_k; }
 
   params.b = batch_size;
   params.h = num_heads;
   params.h_k = num_heads_k;
-  params.h_h_k_ratio = num_heads / num_heads_k;
   params.seqlen_q = seqlen_q;
   params.seqlen_k = seqlen_k;
   params.seqlen_q_rounded = seqlen_q_rounded;
   params.seqlen_k_rounded = seqlen_k_rounded;
   params.d = head_dim;
   params.d_rounded = head_dim_rounded;
+  params.dv = head_dim;  // V head dimension, same as Q/K for now
+  params.dv_rounded = head_dim_rounded;
   params.scale_softmax = softmax_scale;
-  params.scale_softmax_log2 = softmax_scale * M_LOG2E;
-  __half scale_softmax_log2_half = __float2half(params.scale_softmax_log2);
-  __half2 scale_softmax_log2_half2 = __half2(scale_softmax_log2_half, scale_softmax_log2_half);
-  params.scale_softmax_log2_half2 = reinterpret_cast<uint32_t&>(scale_softmax_log2_half2);
+  params.softcap = 0.0f;  // No softcap by default
+  params.v_dim_stride = 1;  // Row-major layout by default
+  params.is_bf16 = false;
+  params.is_fp32 = false;
+  params.is_e4m3 = false;
 
   params.q_batch_stride = q_batch_stride;
   params.q_head_stride = q_head_stride;
