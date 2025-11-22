@@ -9,7 +9,7 @@
 
 #include "cutlass/arch/grid_dependency_control.h"
 
-#include "flash.h"
+#include "../src/flash_internal.h"
 
 #include "static_switch.h"
 
