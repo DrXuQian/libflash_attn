@@ -74,13 +74,25 @@ void reference_attention(const HalfType* Q, const HalfType* K, const HalfType* V
 float compute_relative_error(const HalfType* a, const HalfType* b, int size) {
     float max_diff = 0.0f;
     float max_val = 0.0f;
+    int nan_count = 0;
 
     for (int i = 0; i < size; i++) {
         float val_a = static_cast<float>(a[i]);
         float val_b = static_cast<float>(b[i]);
+
+        if (std::isnan(val_a) || std::isinf(val_a)) {
+            nan_count++;
+            continue;
+        }
+
         float diff = std::abs(val_a - val_b);
         max_diff = std::max(max_diff, diff);
         max_val = std::max(max_val, std::max(std::abs(val_a), std::abs(val_b)));
+    }
+
+    if (nan_count > 0) {
+        printf("WARNING: Found %d NaN/Inf values in output!\n", nan_count);
+        return 1.0f;  // Return error = 1.0 for NaN
     }
 
     return max_diff / (max_val + 1e-6f);
@@ -136,10 +148,18 @@ void test_flash_attention() {
     cudaMalloc(&d_v, v_size * sizeof(HalfType));
     cudaMalloc(&d_o, o_size * sizeof(HalfType));
 
+    // Initialize output to test pattern
+    cudaMemset(d_o, 0xFF, o_size * sizeof(HalfType));
+
     // Copy data to device
     cudaMemcpy(d_q, h_q.data(), q_size * sizeof(HalfType), cudaMemcpyHostToDevice);
     cudaMemcpy(d_k, h_k.data(), k_size * sizeof(HalfType), cudaMemcpyHostToDevice);
     cudaMemcpy(d_v, h_v.data(), v_size * sizeof(HalfType), cudaMemcpyHostToDevice);
+
+    printf("Input data copied to device\n");
+    printf("Q first 5 values: ");
+    for (int i = 0; i < 5; i++) printf("%.4f ", static_cast<float>(h_q[i]));
+    printf("\n");
 
     // Setup strides (contiguous layout)
     int q_batch_stride = num_heads * seqlen_q * head_dim;
@@ -164,22 +184,35 @@ void test_flash_attention() {
     cudaEventRecord(start, stream);
 
     // Call Flash Attention
-    flash_attn::flash_attention_forward(
-        d_q, d_k, d_v, d_o,
-        batch_size, seqlen_q, seqlen_k, num_heads, num_heads, head_dim,
-        q_batch_stride, k_batch_stride, v_batch_stride, o_batch_stride,
-        q_head_stride, k_head_stride, v_head_stride, o_head_stride,
-        q_row_stride, k_row_stride, v_row_stride, o_row_stride,
-        scale, is_causal, -1, -1, stream
-    );
+    {
+        printf("Calling flash_attention_forward...\n");
+        flash_attn::flash_attention_forward(
+            d_q, d_k, d_v, d_o,
+            batch_size, seqlen_q, seqlen_k, num_heads, num_heads, head_dim,
+            q_batch_stride, k_batch_stride, v_batch_stride, o_batch_stride,
+            q_head_stride, k_head_stride, v_head_stride, o_head_stride,
+            q_row_stride, k_row_stride, v_row_stride, o_row_stride,
+            scale, is_causal, -1, -1, stream
+        );
 
-    cudaEventRecord(stop, stream);
-    cudaEventSynchronize(stop);
+        // Check for launch errors
+        cudaError_t launch_err = cudaGetLastError();
+        if (launch_err != cudaSuccess) {
+            printf("CUDA Launch Error: %s\n", cudaGetErrorString(launch_err));
+            goto cleanup;
+        }
 
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        printf("CUDA Error: %s\n", cudaGetErrorString(err));
-        goto cleanup;
+        cudaEventRecord(stop, stream);
+        cudaEventSynchronize(stop);
+
+        // Check for execution errors
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA Execution Error: %s\n", cudaGetErrorString(err));
+            goto cleanup;
+        }
+
+        printf("Flash Attention kernel completed successfully\n");
     }
 
     {
