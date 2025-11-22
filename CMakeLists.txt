@@ -22,12 +22,9 @@ if(NOT NVCC_VERSION)
     message(FATAL_ERROR "Failed to determine NVCC version.")
 endif()
 
-if(GPU_H100 AND NVCC_VERSION GREATER_EQUAL 12)
-    set(compute_capability "90a")
-    add_definitions(-DHOPPER)
-else()
-    set(compute_capability "80")
-endif()
+# Force SM90 for compilation
+set(compute_capability "90")
+add_definitions(-DHOPPER)
 
 message("compute_capability: ${compute_capability}")
 
@@ -46,24 +43,13 @@ include_directories(${CUDA_TOOLKIT_ROOT_DIR}/include)
 link_directories(${CUDA_TOOLKIT_ROOT_DIR}/lib64)
 
 
-if(compute_capability STREQUAL "90a")
-    add_library(flash_attn SHARED
-        src/flash.cu
-        src/flash_fwd_hdim64_fp16_sm80.cu
-        src/flash_fwd_hdim96_fp16_sm80.cu
-        src/flash_fwd_hdim128_fp16_sm80.cu
-        src/flash_fwd_hdim192_fp16_sm80.cu
-        src/flash_fwd_hdim256_fp16_sm80.cu
-    )
-else()
-    add_library(flash_attn SHARED
-        src/flash.cu
-        src/flash_fwd_hdim64_fp16_sm80.cu
-        src/flash_fwd_hdim96_fp16_sm80.cu
-        src/flash_fwd_hdim128_fp16_sm80.cu
-        src/flash_fwd_hdim192_fp16_sm80.cu
-        src/flash_fwd_hdim256_fp16_sm80.cu
-    )
-endif()
+add_library(flash_attn SHARED
+    src/flash.cu
+    src/flash_fwd_hdim64_fp16_sm90.cu
+    src/flash_fwd_hdim96_fp16_sm90.cu
+    src/flash_fwd_hdim128_fp16_sm90.cu
+    src/flash_fwd_hdim192_fp16_sm90.cu
+    src/flash_fwd_hdim256_fp16_sm90.cu
+)
 
 set_target_properties(flash_attn PROPERTIES CUDA_ARCHITECTURES "${compute_capability}")
