@@ -182,6 +182,27 @@ CMakeFiles/flash_attn.dir/hopper/flash_fwd_combine.cu.o : /home/qianxu/flash-att
     /usr/include/c++/11/utility \
     /usr/include/c++/11/bits/stl_relops.h \
     /usr/include/c++/11/initializer_list \
+    /home/qianxu/flash-attention-homemade/libflash_attn/hopper/../src/flash_internal.h \
+    /usr/local/cuda-12.8/include/cuda.h \
+    /usr/lib/gcc/x86_64-linux-gnu/11/include/stdint.h \
+    /usr/include/stdint.h \
+    /usr/include/x86_64-linux-gnu/bits/wchar.h \
+    /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h \
+    /usr/include/c++/11/vector \
+    /usr/include/c++/11/bits/allocator.h \
+    /usr/include/x86_64-linux-gnu/c++/11/bits/c++allocator.h \
+    /usr/include/c++/11/ext/new_allocator.h \
+    /usr/include/c++/11/bits/memoryfwd.h \
+    /usr/include/c++/11/bits/stl_construct.h \
+    /usr/include/c++/11/bits/stl_uninitialized.h \
+    /usr/include/c++/11/ext/alloc_traits.h \
+    /usr/include/c++/11/bits/alloc_traits.h \
+    /usr/include/c++/11/bits/stl_vector.h \
+    /usr/include/c++/11/bits/stl_bvector.h \
+    /usr/include/c++/11/bits/functional_hash.h \
+    /usr/include/c++/11/bits/hash_bytes.h \
+    /usr/include/c++/11/bits/range_access.h \
+    /usr/include/c++/11/bits/vector.tcc \
     /home/qianxu/flash-attention-homemade/libflash_attn/hopper/flash_fwd_combine_launch_template.h \
     /home/qianxu/flash-attention-homemade/libflash_attn/./cutlass/include/cute/tensor.hpp \
     /home/qianxu/flash-attention-homemade/libflash_attn/./cutlass/include/cute/tensor_impl.hpp \
@@ -193,24 +214,18 @@ CMakeFiles/flash_attn.dir/hopper/flash_fwd_combine.cu.o : /home/qianxu/flash-att
     /usr/include/c++/11/ios \
     /usr/include/c++/11/iosfwd \
     /usr/include/c++/11/bits/stringfwd.h \
-    /usr/include/c++/11/bits/memoryfwd.h \
     /usr/include/c++/11/bits/postypes.h \
     /usr/include/c++/11/cwchar \
     /usr/include/wchar.h \
-    /usr/include/x86_64-linux-gnu/bits/wchar.h \
     /usr/include/x86_64-linux-gnu/bits/types/wint_t.h \
     /usr/include/x86_64-linux-gnu/bits/types/mbstate_t.h \
     /usr/include/c++/11/exception \
     /usr/include/c++/11/bits/exception_ptr.h \
     /usr/include/c++/11/bits/cxxabi_init_exception.h \
     /usr/include/c++/11/typeinfo \
-    /usr/include/c++/11/bits/hash_bytes.h \
     /usr/include/c++/11/bits/nested_exception.h \
     /usr/include/c++/11/bits/char_traits.h \
     /usr/include/c++/11/cstdint \
-    /usr/lib/gcc/x86_64-linux-gnu/11/include/stdint.h \
-    /usr/include/stdint.h \
-    /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h \
     /usr/include/c++/11/bits/localefwd.h \
     /usr/include/x86_64-linux-gnu/c++/11/bits/c++locale.h \
     /usr/include/c++/11/clocale \
@@ -232,20 +247,12 @@ CMakeFiles/flash_attn.dir/hopper/flash_fwd_combine.cu.o : /home/qianxu/flash-att
     /usr/include/x86_64-linux-gnu/sys/single_threaded.h \
     /usr/include/c++/11/bits/locale_classes.h \
     /usr/include/c++/11/string \
-    /usr/include/c++/11/bits/allocator.h \
-    /usr/include/x86_64-linux-gnu/c++/11/bits/c++allocator.h \
-    /usr/include/c++/11/ext/new_allocator.h \
     /usr/include/c++/11/bits/ostream_insert.h \
     /usr/include/c++/11/bits/cxxabi_forced.h \
     /usr/include/c++/11/bits/stl_function.h \
     /usr/include/c++/11/backward/binders.h \
-    /usr/include/c++/11/bits/range_access.h \
     /usr/include/c++/11/bits/basic_string.h \
-    /usr/include/c++/11/ext/alloc_traits.h \
-    /usr/include/c++/11/bits/alloc_traits.h \
-    /usr/include/c++/11/bits/stl_construct.h \
     /usr/include/c++/11/string_view \
-    /usr/include/c++/11/bits/functional_hash.h \
     /usr/include/c++/11/bits/string_view.tcc \
     /usr/include/c++/11/ext/string_conversions.h \
     /usr/include/c++/11/cerrno \
@@ -587,11 +594,6 @@ CMakeFiles/flash_attn.dir/hopper/flash_fwd_combine.cu.o : /home/qianxu/flash-att
     /usr/include/c++/11/bits/node_handle.h \
     /usr/include/c++/11/bits/unordered_map.h \
     /usr/include/c++/11/bits/erase_if.h \
-    /usr/include/c++/11/vector \
-    /usr/include/c++/11/bits/stl_uninitialized.h \
-    /usr/include/c++/11/bits/stl_vector.h \
-    /usr/include/c++/11/bits/stl_bvector.h \
-    /usr/include/c++/11/bits/vector.tcc \
     /usr/include/c++/11/pstl/execution_defs.h \
     /home/qianxu/flash-attention-homemade/libflash_attn/./cutlass/include/cutlass/half.h \
     /usr/include/c++/11/cstring \
@@ -700,7 +702,6 @@ CMakeFiles/flash_attn.dir/hopper/flash_fwd_combine.cu.o : /home/qianxu/flash-att
     /home/qianxu/flash-attention-homemade/libflash_attn/./cutlass/include/cute/atom/copy_traits_sm90.hpp \
     /home/qianxu/flash-attention-homemade/libflash_attn/./cutlass/include/cute/arch/copy_sm90.hpp \
     /home/qianxu/flash-attention-homemade/libflash_attn/./cutlass/include/cute/arch/copy_sm90_desc.hpp \
-    /usr/local/cuda-12.8/include/cuda.h \
     /home/qianxu/flash-attention-homemade/libflash_attn/./cutlass/include/cute/arch/copy_sm90_tma.hpp \
     /home/qianxu/flash-attention-homemade/libflash_attn/./cutlass/include/cute/atom/copy_traits_sm90_tma.hpp \
     /home/qianxu/flash-attention-homemade/libflash_attn/./cutlass/include/cute/atom/copy_traits_sm90_tma_swizzle.hpp \

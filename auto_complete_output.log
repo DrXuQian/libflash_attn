@@ -1,0 +1,7 @@
+=== Auto Completion Started at Sat Nov 22 11:56:02 CST 2025 ===
+Waiting for compilation to complete...
+[12:08:02] Compilation process finished
+[12:08:02] ✗ COMPILATION FAILED
+tail: cannot open '/home/qianxu/flash-attention-homemade/libflash_attn/build/compile_final.log' for reading: No such file or directory
+=== Auto Completion Finished at Sat Nov 22 12:08:02 CST 2025 ===
+Final status saved to /home/qianxu/flash-attention-homemade/libflash_attn/build/final_status.txt

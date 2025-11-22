@@ -125,6 +125,8 @@ Flash_fwd_params get_fwd_params(half* q_ptr, half* k_ptr, half* v_ptr, half* out
   params.window_size_left = window_size_left;
   params.window_size_right = window_size_right;
 
+  params.num_splits = 1;  // Standard forward uses single split
+
   return params;
 }
 
@@ -141,6 +143,10 @@ void flash_attention_forward(half* q_ptr, half* k_ptr, half* v_ptr, half* output
       head_dim, q_batch_stride, k_batch_stride, v_batch_stride, o_batch_stride, q_head_stride,
       k_head_stride, v_head_stride, o_head_stride, q_row_stride, k_row_stride, v_row_stride,
       o_row_stride, softmax_scale, is_causal, window_size_left, window_size_right);
+
+  int tile_count_semaphore = 0;
+  params.tile_count_semaphore = &tile_count_semaphore;
+
   run(params, stream);
 }
 
