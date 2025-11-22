@@ -1,6 +1,7 @@
 // Copyright (c) 2024, Tri Dao.
 // Splitting the different head dimensions to different files to speed up compilation.
 
+#include "../src/flash_internal.h"
 #include "flash_fwd_combine_launch_template.h"
 
 template void run_mha_fwd_combine_<float, float, 64>(Flash_fwd_params &params, cudaStream_t stream, bool enable_pdl);

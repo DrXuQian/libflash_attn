@@ -1,0 +1,4 @@
+/home/qianxu/flash-attention-homemade/libflash_attn/build/CMakeFiles/flash_attn.dir
+/home/qianxu/flash-attention-homemade/libflash_attn/build/CMakeFiles/test_fp8_flash_attn.dir
+/home/qianxu/flash-attention-homemade/libflash_attn/build/CMakeFiles/edit_cache.dir
+/home/qianxu/flash-attention-homemade/libflash_attn/build/CMakeFiles/rebuild_cache.dir
