@@ -50,6 +50,17 @@ add_library(flash_attn SHARED
     src/flash_fwd_hdim128_fp16_sm90.cu
     src/flash_fwd_hdim192_fp16_sm90.cu
     src/flash_fwd_hdim256_fp16_sm90.cu
+    src/flash_fwd_hdim64_e4m3_sm90.cu
+    src/flash_fwd_hdim128_e4m3_sm90.cu
+    src/flash_fwd_hdim256_e4m3_sm90.cu
 )
 
 set_target_properties(flash_attn PROPERTIES CUDA_ARCHITECTURES "${compute_capability}")
+
+# Build test executable
+add_executable(test_fp8_flash_attn
+    test/test_fp8_flash_attn.cu
+)
+
+target_link_libraries(test_fp8_flash_attn flash_attn)
+set_target_properties(test_fp8_flash_attn PROPERTIES CUDA_ARCHITECTURES "${compute_capability}")

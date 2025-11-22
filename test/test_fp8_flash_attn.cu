@@ -1,0 +1,368 @@
+#include <cuda.h>
+#include <cuda_fp16.h>
+#include <cuda_fp8.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cmath>
+#include <random>
+#include <vector>
+
+#include "../src/flash.h"
+#include "../src/flash_internal.h"
+
+// Helper function to convert FP16 to FP8 E4M3
+__global__ void convert_fp16_to_fp8_e4m3_kernel(const half* input, __nv_fp8_e4m3* output, int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        output[idx] = __nv_fp8_e4m3(input[idx]);
+    }
+}
+
+// Helper function to convert FP8 E4M3 to FP16
+__global__ void convert_fp8_e4m3_to_fp16_kernel(const __nv_fp8_e4m3* input, half* output, int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        output[idx] = half(input[idx]);
+    }
+}
+
+// Reference attention implementation for validation (simplified)
+void reference_attention(const half* Q, const half* K, const half* V, half* O,
+                        int batch_size, int num_heads, int seqlen_q, int seqlen_k, int head_dim,
+                        float scale, bool is_causal) {
+    std::vector<float> scores(seqlen_q * seqlen_k);
+    std::vector<float> attn_weights(seqlen_q * seqlen_k);
+
+    for (int b = 0; b < batch_size; b++) {
+        for (int h = 0; h < num_heads; h++) {
+            // Compute Q @ K^T
+            for (int i = 0; i < seqlen_q; i++) {
+                for (int j = 0; j < seqlen_k; j++) {
+                    if (is_causal && j > i) {
+                        scores[i * seqlen_k + j] = -INFINITY;
+                        continue;
+                    }
+
+                    float score = 0.0f;
+                    for (int d = 0; d < head_dim; d++) {
+                        int q_idx = b * num_heads * seqlen_q * head_dim + h * seqlen_q * head_dim + i * head_dim + d;
+                        int k_idx = b * num_heads * seqlen_k * head_dim + h * seqlen_k * head_dim + j * head_dim + d;
+                        score += __half2float(Q[q_idx]) * __half2float(K[k_idx]);
+                    }
+                    scores[i * seqlen_k + j] = score * scale;
+                }
+            }
+
+            // Softmax
+            for (int i = 0; i < seqlen_q; i++) {
+                float max_score = -INFINITY;
+                for (int j = 0; j < seqlen_k; j++) {
+                    max_score = std::max(max_score, scores[i * seqlen_k + j]);
+                }
+
+                float sum_exp = 0.0f;
+                for (int j = 0; j < seqlen_k; j++) {
+                    attn_weights[i * seqlen_k + j] = expf(scores[i * seqlen_k + j] - max_score);
+                    sum_exp += attn_weights[i * seqlen_k + j];
+                }
+
+                for (int j = 0; j < seqlen_k; j++) {
+                    attn_weights[i * seqlen_k + j] /= sum_exp;
+                }
+            }
+
+            // Compute attention @ V
+            for (int i = 0; i < seqlen_q; i++) {
+                for (int d = 0; d < head_dim; d++) {
+                    float output = 0.0f;
+                    for (int j = 0; j < seqlen_k; j++) {
+                        int v_idx = b * num_heads * seqlen_k * head_dim + h * seqlen_k * head_dim + j * head_dim + d;
+                        output += attn_weights[i * seqlen_k + j] * __half2float(V[v_idx]);
+                    }
+                    int o_idx = b * num_heads * seqlen_q * head_dim + h * seqlen_q * head_dim + i * head_dim + d;
+                    O[o_idx] = __float2half(output);
+                }
+            }
+        }
+    }
+}
+
+// Compute relative error between two tensors
+float compute_relative_error(const half* a, const half* b, int size) {
+    float max_diff = 0.0f;
+    float max_val = 0.0f;
+
+    for (int i = 0; i < size; i++) {
+        float val_a = __half2float(a[i]);
+        float val_b = __half2float(b[i]);
+        float diff = std::abs(val_a - val_b);
+        max_diff = std::max(max_diff, diff);
+        max_val = std::max(max_val, std::max(std::abs(val_a), std::abs(val_b)));
+    }
+
+    return max_diff / (max_val + 1e-6f);
+}
+
+void test_fp8_flash_attention() {
+    printf("=== Testing FP8 Flash Attention ===\n\n");
+
+    // Test configuration
+    const int batch_size = 2;
+    const int num_heads = 8;
+    const int seqlen_q = 128;
+    const int seqlen_k = 128;
+    const int head_dim = 64;
+    const bool is_causal = true;
+    const float scale = 1.0f / sqrtf(static_cast<float>(head_dim));
+
+    printf("Configuration:\n");
+    printf("  Batch size: %d\n", batch_size);
+    printf("  Num heads: %d\n", num_heads);
+    printf("  Sequence length (Q): %d\n", seqlen_q);
+    printf("  Sequence length (K): %d\n", seqlen_k);
+    printf("  Head dimension: %d\n", head_dim);
+    printf("  Causal: %s\n", is_causal ? "true" : "false");
+    printf("  Scale: %f\n\n", scale);
+
+    // Allocate host memory
+    const int q_size = batch_size * num_heads * seqlen_q * head_dim;
+    const int k_size = batch_size * num_heads * seqlen_k * head_dim;
+    const int v_size = batch_size * num_heads * seqlen_k * head_dim;
+    const int o_size = batch_size * num_heads * seqlen_q * head_dim;
+
+    std::vector<half> h_q(q_size);
+    std::vector<half> h_k(k_size);
+    std::vector<half> h_v(v_size);
+    std::vector<half> h_o(o_size);
+    std::vector<half> h_o_ref(o_size);
+
+    // Initialize with random values
+    std::random_device rd;
+    std::mt19937 gen(42);  // Fixed seed for reproducibility
+    std::normal_distribution<float> dist(0.0f, 1.0f);
+
+    printf("Initializing random input data...\n");
+    for (int i = 0; i < q_size; i++) h_q[i] = __float2half(dist(gen) * 0.1f);
+    for (int i = 0; i < k_size; i++) h_k[i] = __float2half(dist(gen) * 0.1f);
+    for (int i = 0; i < v_size; i++) h_v[i] = __float2half(dist(gen) * 0.1f);
+
+    // Allocate device memory for FP16
+    half *d_q_fp16, *d_k_fp16, *d_v_fp16, *d_o_fp16;
+    cudaMalloc(&d_q_fp16, q_size * sizeof(half));
+    cudaMalloc(&d_k_fp16, k_size * sizeof(half));
+    cudaMalloc(&d_v_fp16, v_size * sizeof(half));
+    cudaMalloc(&d_o_fp16, o_size * sizeof(half));
+
+    // Allocate device memory for FP8
+    __nv_fp8_e4m3 *d_q_fp8, *d_k_fp8, *d_v_fp8;
+    cudaMalloc(&d_q_fp8, q_size * sizeof(__nv_fp8_e4m3));
+    cudaMalloc(&d_k_fp8, k_size * sizeof(__nv_fp8_e4m3));
+    cudaMalloc(&d_v_fp8, v_size * sizeof(__nv_fp8_e4m3));
+
+    // Copy FP16 data to device
+    cudaMemcpy(d_q_fp16, h_q.data(), q_size * sizeof(half), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k_fp16, h_k.data(), k_size * sizeof(half), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_v_fp16, h_v.data(), v_size * sizeof(half), cudaMemcpyHostToDevice);
+
+    // Convert FP16 to FP8
+    printf("Converting FP16 to FP8 E4M3...\n");
+    const int block_size = 256;
+    int num_blocks_q = (q_size + block_size - 1) / block_size;
+    int num_blocks_k = (k_size + block_size - 1) / block_size;
+    int num_blocks_v = (v_size + block_size - 1) / block_size;
+
+    convert_fp16_to_fp8_e4m3_kernel<<<num_blocks_q, block_size>>>(d_q_fp16, d_q_fp8, q_size);
+    convert_fp16_to_fp8_e4m3_kernel<<<num_blocks_k, block_size>>>(d_k_fp16, d_k_fp8, k_size);
+    convert_fp16_to_fp8_e4m3_kernel<<<num_blocks_v, block_size>>>(d_v_fp16, d_v_fp8, v_size);
+    cudaDeviceSynchronize();
+
+    // Allocate descale factors for FP8 (set to 1.0 for simplicity)
+    float *d_q_descale, *d_k_descale, *d_v_descale;
+    cudaMalloc(&d_q_descale, sizeof(float));
+    cudaMalloc(&d_k_descale, sizeof(float));
+    cudaMalloc(&d_v_descale, sizeof(float));
+    float descale_val = 1.0f;
+    cudaMemcpy(d_q_descale, &descale_val, sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k_descale, &descale_val, sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_v_descale, &descale_val, sizeof(float), cudaMemcpyHostToDevice);
+
+    // Setup Flash Attention parameters for FP8
+    printf("Setting up Flash Attention FP8 parameters...\n");
+    flash_attn::Flash_fwd_params params = {};
+
+    params.q_ptr = d_q_fp8;
+    params.k_ptr = d_k_fp8;
+    params.v_ptr = d_v_fp8;
+    params.o_ptr = d_o_fp16;
+
+    params.q_descale_ptr = d_q_descale;
+    params.k_descale_ptr = d_k_descale;
+    params.v_descale_ptr = d_v_descale;
+
+    // Strides (contiguous layout)
+    params.q_batch_stride = num_heads * seqlen_q * head_dim;
+    params.q_head_stride = seqlen_q * head_dim;
+    params.q_row_stride = head_dim;
+    params.k_batch_stride = num_heads * seqlen_k * head_dim;
+    params.k_head_stride = seqlen_k * head_dim;
+    params.k_row_stride = head_dim;
+    params.v_batch_stride = num_heads * seqlen_k * head_dim;
+    params.v_head_stride = seqlen_k * head_dim;
+    params.v_row_stride = head_dim;
+    params.o_batch_stride = num_heads * seqlen_q * head_dim;
+    params.o_head_stride = seqlen_q * head_dim;
+    params.o_row_stride = head_dim;
+
+    params.b = batch_size;
+    params.h = num_heads;
+    params.h_k = num_heads;
+    params.seqlen_q = seqlen_q;
+    params.seqlen_k = seqlen_k;
+    params.d = head_dim;
+    params.dv = head_dim;
+
+    // Rounded dimensions
+    auto round_multiple = [](int x, int m) { return (x + m - 1) / m * m; };
+    params.seqlen_q_rounded = round_multiple(seqlen_q, 128);
+    params.seqlen_k_rounded = round_multiple(seqlen_k, 128);
+    params.d_rounded = round_multiple(head_dim, 32);
+    params.dv_rounded = params.d_rounded;
+
+    params.scale_softmax = scale;
+    params.softcap = 0.0f;
+    params.is_causal = is_causal;
+    params.is_local = false;
+    params.is_bf16 = false;
+    params.is_fp32 = false;
+    params.is_e4m3 = true;  // Enable FP8 E4M3
+    params.v_dim_stride = 1;
+
+    params.window_size_left = -1;
+    params.window_size_right = is_causal ? 0 : -1;
+
+    // Get device architecture
+    int device;
+    cudaGetDevice(&device);
+    int major, minor;
+    cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device);
+    cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device);
+    params.arch = major * 10 + minor;
+
+    printf("GPU Architecture: SM%d\n", params.arch);
+
+    if (params.arch < 90) {
+        printf("ERROR: FP8 Flash Attention requires SM90 (Hopper) or later. Current arch: SM%d\n", params.arch);
+        goto cleanup;
+    }
+
+    // Run Flash Attention FP8
+    printf("\nRunning FP8 Flash Attention...\n");
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaStream_t stream = 0;
+
+    cudaEventRecord(start, stream);
+
+    // Call the FP8 kernel through the namespace
+    namespace flash3 {
+        extern void run_mha_fwd_hdim64_fp8<cutlass::float_e4m3_t>(flash_attn::Flash_fwd_params &params, cudaStream_t stream);
+    }
+
+    flash3::run_mha_fwd_hdim64_fp8<cutlass::float_e4m3_t>(params, stream);
+
+    cudaEventRecord(stop, stream);
+    cudaEventSynchronize(stop);
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA Error after FP8 Flash Attention: %s\n", cudaGetErrorString(err));
+        goto cleanup;
+    }
+
+    float elapsed_ms;
+    cudaEventElapsedTime(&elapsed_ms, start, stop);
+    printf("FP8 Flash Attention completed in %.3f ms\n", elapsed_ms);
+
+    // Copy output back to host
+    cudaMemcpy(h_o.data(), d_o_fp16, o_size * sizeof(half), cudaMemcpyDeviceToHost);
+
+    // Compute reference solution using FP16
+    printf("\nComputing reference FP16 solution for validation...\n");
+    reference_attention(h_q.data(), h_k.data(), h_v.data(), h_o_ref.data(),
+                       batch_size, num_heads, seqlen_q, seqlen_k, head_dim,
+                       scale, is_causal);
+
+    // Compare results
+    float rel_error = compute_relative_error(h_o.data(), h_o_ref.data(), o_size);
+    printf("Relative error (FP8 vs FP16 reference): %.6f\n", rel_error);
+
+    // Print sample outputs
+    printf("\nSample outputs (first 10 values):\n");
+    printf("FP8 Flash Attention: ");
+    for (int i = 0; i < 10; i++) {
+        printf("%.4f ", __half2float(h_o[i]));
+    }
+    printf("\n");
+
+    printf("FP16 Reference:      ");
+    for (int i = 0; i < 10; i++) {
+        printf("%.4f ", __half2float(h_o_ref[i]));
+    }
+    printf("\n");
+
+    // Validation
+    const float tolerance = 0.1f;  // FP8 has lower precision, so we use a larger tolerance
+    if (rel_error < tolerance) {
+        printf("\n✓ TEST PASSED (relative error < %.2f)\n", tolerance);
+    } else {
+        printf("\n✗ TEST FAILED (relative error %.6f >= %.2f)\n", rel_error, tolerance);
+    }
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+
+cleanup:
+    // Cleanup
+    cudaFree(d_q_fp16);
+    cudaFree(d_k_fp16);
+    cudaFree(d_v_fp16);
+    cudaFree(d_o_fp16);
+    cudaFree(d_q_fp8);
+    cudaFree(d_k_fp8);
+    cudaFree(d_v_fp8);
+    cudaFree(d_q_descale);
+    cudaFree(d_k_descale);
+    cudaFree(d_v_descale);
+}
+
+int main() {
+    printf("Flash Attention FP8 Test Suite\n");
+    printf("================================\n\n");
+
+    // Check CUDA device
+    int device_count;
+    cudaGetDeviceCount(&device_count);
+
+    if (device_count == 0) {
+        printf("ERROR: No CUDA devices found!\n");
+        return 1;
+    }
+
+    printf("Found %d CUDA device(s)\n\n", device_count);
+
+    for (int i = 0; i < device_count; i++) {
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties(&prop, i);
+        printf("Device %d: %s\n", i, prop.name);
+        printf("  Compute capability: %d.%d\n", prop.major, prop.minor);
+        printf("  Memory: %.2f GB\n", prop.totalGlobalMem / (1024.0f * 1024.0f * 1024.0f));
+        printf("  SMs: %d\n\n", prop.multiProcessorCount);
+    }
+
+    // Run test
+    test_fp8_flash_attention();
+
+    return 0;
+}
