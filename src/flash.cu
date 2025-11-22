@@ -21,10 +21,6 @@ inline void _assert(bool result, const char* const file, int const line,
 
 #define CHECK(val) _assert(val, __FILE__, __LINE__)
 
-// Template declaration for SM80 kernels
-template<int Arch, typename T, int kHeadDim, int kHeadDimV, bool Split, bool PagedKVNonTMA, bool Has_softcap, bool PackGQA>
-void run_mha_fwd_(Flash_fwd_params &params, cudaStream_t stream);
-
 void run(Flash_fwd_params params, cudaStream_t stream) {
   int device;
   cudaGetDevice(&device);
@@ -163,9 +159,8 @@ void flash_attention_var_len_forward(half* q_ptr, half* k_ptr, half* v_ptr, cons
       q_head_stride, k_head_stride, v_head_stride, o_head_stride, q_row_stride, k_row_stride,
       v_row_stride, o_row_stride, softmax_scale, is_causal, window_size_left, window_size_right);
 
-  params.cu_seqlens_q = cu_seqlens_q;
-  params.cu_seqlens_k = cu_seqlens_k;
-  params.is_seqlens_k_cumulative = true;
+  params.cu_seqlens_q = const_cast<int*>(cu_seqlens_q);
+  params.cu_seqlens_k = const_cast<int*>(cu_seqlens_k);
   params.total_q = total_q;
   params.total_k = total_k;
 
@@ -220,25 +215,9 @@ inline int num_splits_heuristic(int batch_nheads_mblocks, int num_SMs, int num_n
 }
 
 void run_splitkv(Flash_fwd_params params, cudaStream_t stream) {
-  auto head_dim = params.d;
-
-  if (head_dim <= 32) {
-    run_mha_fwd_splitkv_dispatch<half, 32>(params, stream);
-  } else if (head_dim <= 64) {
-    run_mha_fwd_splitkv_dispatch<half, 64>(params, stream);
-  } else if (head_dim <= 96) {
-    run_mha_fwd_splitkv_dispatch<half, 96>(params, stream);
-  } else if (head_dim <= 128) {
-    run_mha_fwd_splitkv_dispatch<half, 128>(params, stream);
-  } else if (head_dim <= 160) {
-    run_mha_fwd_splitkv_dispatch<half, 160>(params, stream);
-  } else if (head_dim <= 192) {
-    run_mha_fwd_splitkv_dispatch<half, 192>(params, stream);
-  } else if (head_dim <= 224) {
-    run_mha_fwd_splitkv_dispatch<half, 224>(params, stream);
-  } else {
-    run_mha_fwd_splitkv_dispatch<half, 256>(params, stream);
-  }
+  // Split-KV is now integrated into the unified kernel dispatch in Flash Attention 3
+  // Use run() with Split=true template parameter instead
+  throw std::runtime_error("run_splitkv is deprecated in Flash Attention 3. Use run() instead with appropriate Split parameter.");
 }
 
 void set_splitkv_params(Flash_fwd_params& params, int32_t* block_table_ptr, int32_t* seqlens_k_ptr,
@@ -247,18 +226,17 @@ void set_splitkv_params(Flash_fwd_params& params, int32_t* block_table_ptr, int3
                         int block_size, int max_num_blocks_per_seq, int block_table_batch_stride,
                         int num_splits) {
   params.rotary_dim = 0;
-  params.block_table = block_table_ptr;
-  params.page_block_size = block_size;
-  params.block_table_batch_stride = block_table_batch_stride;
+  params.page_table = block_table_ptr;
+  params.page_size = block_size;
+  params.page_table_batch_stride = block_table_batch_stride;
   params.cu_seqlens_k = seqlens_k_ptr;
-  params.is_seqlens_k_cumulative = false;
 
   int device;
   cudaGetDevice(&device);
   int major, minor;
   cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device);
   cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device);
-  params.sm = major * 10 + minor;
+  params.arch = major * 10 + minor;
 
   // This needs to match with run_mha_fwd_splitkv_dispatch
   const int block_n = head_dim <= 64 ? 256 : (head_dim <= 128 ? 128 : 64);

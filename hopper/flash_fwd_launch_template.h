@@ -13,7 +13,7 @@
 #include "cutlass/kernel_launch.h"
 
 #include "static_switch.h"
-#include "flash.h"
+#include "../src/flash_internal.h"
 #include "tile_size.h"
 #include "tile_scheduler.hpp"
 #include "flash_fwd_kernel_sm90.h"
