@@ -164,7 +164,7 @@ void test_flash_attention() {
     cudaEventRecord(start, stream);
 
     // Call Flash Attention
-    flash_attention_forward(
+    flash_attn::flash_attention_forward(
         d_q, d_k, d_v, d_o,
         batch_size, seqlen_q, seqlen_k, num_heads, num_heads, head_dim,
         q_batch_stride, k_batch_stride, v_batch_stride, o_batch_stride,
