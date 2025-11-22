@@ -53,6 +53,8 @@ add_library(flash_attn SHARED
     src/flash_fwd_hdim64_e4m3_sm90.cu
     src/flash_fwd_hdim128_e4m3_sm90.cu
     src/flash_fwd_hdim256_e4m3_sm90.cu
+    hopper/flash_prepare_scheduler.cu
+    hopper/flash_fwd_combine.cu
 )
 
 set_target_properties(flash_attn PROPERTIES CUDA_ARCHITECTURES "${compute_capability}")
