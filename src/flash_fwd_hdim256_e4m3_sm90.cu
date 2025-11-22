@@ -2,9 +2,8 @@
 // Splitting the different head dimensions to different files to speed up compilation.
 
 #include "../hopper/flash_fwd_launch_template.h"
-namespace flash3{
-template<>
-void run_mha_fwd_<cutlass::float_e4m3_t, 256>(Flash_fwd_params &params, cudaStream_t stream) {
-    run_mha_fwd_hdim256_fp8<cutlass::float_e4m3_t>(params, stream);
-}
-}
+
+#ifndef FLASHATTENTION_DISABLE_HDIM256
+// Template parameters: <Arch, T, kHeadDim, kHeadDimV, Split, PagedKVNonTMA, Has_softcap, PackGQA>
+template void run_mha_fwd_<90, cutlass::float_e4m3_t, 256, 256, false, false, false, false>(Flash_fwd_params &params, cudaStream_t stream);
+#endif
