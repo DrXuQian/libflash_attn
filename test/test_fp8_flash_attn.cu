@@ -1,5 +1,4 @@
 #include <cuda.h>
-#include <cuda_fp16.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -8,10 +7,10 @@
 
 #include "flash.h"
 
-using namespace flash_attn;
+using HalfType = flash_attn::half;
 
 // Reference attention implementation for validation
-void reference_attention(const half* Q, const half* K, const half* V, half* O,
+void reference_attention(const HalfType* Q, const HalfType* K, const HalfType* V, HalfType* O,
                         int batch_size, int num_heads, int seqlen_q, int seqlen_k, int head_dim,
                         float scale, bool is_causal) {
     std::vector<float> scores(seqlen_q * seqlen_k);
@@ -64,7 +63,7 @@ void reference_attention(const half* Q, const half* K, const half* V, half* O,
                         output += attn_weights[i * seqlen_k + j] * static_cast<float>(V[v_idx]);
                     }
                     int o_idx = b * num_heads * seqlen_q * head_dim + h * seqlen_q * head_dim + i * head_dim + d;
-                    O[o_idx] = static_cast<half>(output);
+                    O[o_idx] = static_cast<HalfType>(output);
                 }
             }
         }
@@ -72,7 +71,7 @@ void reference_attention(const half* Q, const half* K, const half* V, half* O,
 }
 
 // Compute relative error
-float compute_relative_error(const half* a, const half* b, int size) {
+float compute_relative_error(const HalfType* a, const HalfType* b, int size) {
     float max_diff = 0.0f;
     float max_val = 0.0f;
 
@@ -114,11 +113,11 @@ void test_flash_attention() {
     const int v_size = batch_size * num_heads * seqlen_k * head_dim;
     const int o_size = batch_size * num_heads * seqlen_q * head_dim;
 
-    std::vector<half> h_q(q_size);
-    std::vector<half> h_k(k_size);
-    std::vector<half> h_v(v_size);
-    std::vector<half> h_o(o_size);
-    std::vector<half> h_o_ref(o_size);
+    std::vector<HalfType> h_q(q_size);
+    std::vector<HalfType> h_k(k_size);
+    std::vector<HalfType> h_v(v_size);
+    std::vector<HalfType> h_o(o_size);
+    std::vector<HalfType> h_o_ref(o_size);
 
     // Initialize with random values
     std::random_device rd;
@@ -126,21 +125,21 @@ void test_flash_attention() {
     std::normal_distribution<float> dist(0.0f, 1.0f);
 
     printf("Initializing random input data...\n");
-    for (int i = 0; i < q_size; i++) h_q[i] = static_cast<half>(dist(gen) * 0.1f);
-    for (int i = 0; i < k_size; i++) h_k[i] = static_cast<half>(dist(gen) * 0.1f);
-    for (int i = 0; i < v_size; i++) h_v[i] = static_cast<half>(dist(gen) * 0.1f);
+    for (int i = 0; i < q_size; i++) h_q[i] = static_cast<HalfType>(dist(gen) * 0.1f);
+    for (int i = 0; i < k_size; i++) h_k[i] = static_cast<HalfType>(dist(gen) * 0.1f);
+    for (int i = 0; i < v_size; i++) h_v[i] = static_cast<HalfType>(dist(gen) * 0.1f);
 
     // Allocate device memory
-    half *d_q, *d_k, *d_v, *d_o;
-    cudaMalloc(&d_q, q_size * sizeof(half));
-    cudaMalloc(&d_k, k_size * sizeof(half));
-    cudaMalloc(&d_v, v_size * sizeof(half));
-    cudaMalloc(&d_o, o_size * sizeof(half));
+    HalfType *d_q, *d_k, *d_v, *d_o;
+    cudaMalloc(&d_q, q_size * sizeof(HalfType));
+    cudaMalloc(&d_k, k_size * sizeof(HalfType));
+    cudaMalloc(&d_v, v_size * sizeof(HalfType));
+    cudaMalloc(&d_o, o_size * sizeof(HalfType));
 
     // Copy data to device
-    cudaMemcpy(d_q, h_q.data(), q_size * sizeof(half), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_k, h_k.data(), k_size * sizeof(half), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_v, h_v.data(), v_size * sizeof(half), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_q, h_q.data(), q_size * sizeof(HalfType), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k, h_k.data(), k_size * sizeof(HalfType), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_v, h_v.data(), v_size * sizeof(HalfType), cudaMemcpyHostToDevice);
 
     // Setup strides (contiguous layout)
     int q_batch_stride = num_heads * seqlen_q * head_dim;
@@ -188,7 +187,7 @@ void test_flash_attention() {
     printf("Flash Attention completed in %.3f ms\n", elapsed_ms);
 
     // Copy output back
-    cudaMemcpy(h_o.data(), d_o, o_size * sizeof(half), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_o.data(), d_o, o_size * sizeof(HalfType), cudaMemcpyDeviceToHost);
 
     // Compute reference
     printf("\nComputing reference solution...\n");
