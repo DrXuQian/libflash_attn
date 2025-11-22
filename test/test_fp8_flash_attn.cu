@@ -182,43 +182,45 @@ void test_flash_attention() {
         goto cleanup;
     }
 
-    float elapsed_ms;
-    cudaEventElapsedTime(&elapsed_ms, start, stop);
-    printf("Flash Attention completed in %.3f ms\n", elapsed_ms);
+    {
+        float elapsed_ms;
+        cudaEventElapsedTime(&elapsed_ms, start, stop);
+        printf("Flash Attention completed in %.3f ms\n", elapsed_ms);
 
-    // Copy output back
-    cudaMemcpy(h_o.data(), d_o, o_size * sizeof(HalfType), cudaMemcpyDeviceToHost);
+        // Copy output back
+        cudaMemcpy(h_o.data(), d_o, o_size * sizeof(HalfType), cudaMemcpyDeviceToHost);
 
-    // Compute reference
-    printf("\nComputing reference solution...\n");
-    reference_attention(h_q.data(), h_k.data(), h_v.data(), h_o_ref.data(),
-                       batch_size, num_heads, seqlen_q, seqlen_k, head_dim,
-                       scale, is_causal);
+        // Compute reference
+        printf("\nComputing reference solution...\n");
+        reference_attention(h_q.data(), h_k.data(), h_v.data(), h_o_ref.data(),
+                           batch_size, num_heads, seqlen_q, seqlen_k, head_dim,
+                           scale, is_causal);
 
-    // Compare results
-    float rel_error = compute_relative_error(h_o.data(), h_o_ref.data(), o_size);
-    printf("Relative error: %.6f\n", rel_error);
+        // Compare results
+        float rel_error = compute_relative_error(h_o.data(), h_o_ref.data(), o_size);
+        printf("Relative error: %.6f\n", rel_error);
 
-    // Print sample outputs
-    printf("\nSample outputs (first 10 values):\n");
-    printf("Flash Attention: ");
-    for (int i = 0; i < 10; i++) {
-        printf("%.4f ", static_cast<float>(h_o[i]));
-    }
-    printf("\n");
+        // Print sample outputs
+        printf("\nSample outputs (first 10 values):\n");
+        printf("Flash Attention: ");
+        for (int i = 0; i < 10; i++) {
+            printf("%.4f ", static_cast<float>(h_o[i]));
+        }
+        printf("\n");
 
-    printf("Reference:       ");
-    for (int i = 0; i < 10; i++) {
-        printf("%.4f ", static_cast<float>(h_o_ref[i]));
-    }
-    printf("\n");
+        printf("Reference:       ");
+        for (int i = 0; i < 10; i++) {
+            printf("%.4f ", static_cast<float>(h_o_ref[i]));
+        }
+        printf("\n");
 
-    // Validation
-    const float tolerance = 0.01f;
-    if (rel_error < tolerance) {
-        printf("\n✓ TEST PASSED (relative error < %.3f)\n", tolerance);
-    } else {
-        printf("\n✗ TEST FAILED (relative error %.6f >= %.3f)\n", rel_error, tolerance);
+        // Validation
+        const float tolerance = 0.01f;
+        if (rel_error < tolerance) {
+            printf("\n✓ TEST PASSED (relative error < %.3f)\n", tolerance);
+        } else {
+            printf("\n✗ TEST FAILED (relative error %.6f >= %.3f)\n", rel_error, tolerance);
+        }
     }
 
     cudaEventDestroy(start);
