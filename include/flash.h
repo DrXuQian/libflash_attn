@@ -106,4 +106,37 @@ void flash_attention_splitkv_paged_forward(half* q_ptr,
 					   int num_splits = 0,
                     			   cudaStream_t stream = nullptr);
 
+
+// FP8 E4M3 forward pass
+void flash_attention_fp8_forward(void* q_ptr,
+			 void* k_ptr,
+			 void* v_ptr,
+			 void* output_ptr,
+			 float* q_descale_ptr,
+			 float* k_descale_ptr,
+			 float* v_descale_ptr,
+			 int batch_size,
+			 int seqlen_q,
+			 int seqlen_k,
+			 int num_heads,
+			 int num_heads_k,
+			 int head_dim,
+			 int q_batch_stride,
+			 int k_batch_stride,
+			 int v_batch_stride,
+			 int o_batch_stride,
+			 int q_head_stride,
+			 int k_head_stride,
+			 int v_head_stride,
+			 int o_head_stride,
+			 int q_row_stride,
+			 int k_row_stride,
+			 int v_row_stride,
+			 int o_row_stride,
+			 float softmax_scale,
+			 bool is_causal,
+			 int window_size_left = -1,
+			 int window_size_right = -1,
+			 cudaStream_t stream = nullptr);
+
 } // namespace flash_attn

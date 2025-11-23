@@ -29,20 +29,33 @@ void run(Flash_fwd_params params, cudaStream_t stream) {
   cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device);
   params.arch = major * 10 + minor;
 
-  // For SM80, we only support FP16 currently
-  // Template params: <Arch, T, kHeadDim, kHeadDimV, Split, PagedKVNonTMA, Has_softcap, PackGQA>
-  assert(params.is_e4m3 == false);
   auto head_dim = params.d;
-  if (head_dim <= 64) {
-    run_mha_fwd_<80, cutlass::half_t, 64, 64, false, false, false, true>(params, stream);
-  } else if (head_dim <= 96) {
-    run_mha_fwd_<80, cutlass::half_t, 96, 96, false, false, false, true>(params, stream);
-  } else if (head_dim <= 128) {
-    run_mha_fwd_<80, cutlass::half_t, 128, 128, false, false, false, true>(params, stream);
-  } else if (head_dim <= 192) {
-    run_mha_fwd_<80, cutlass::half_t, 192, 192, false, false, false, true>(params, stream);
+
+  // Dispatch based on data type
+  if (params.is_e4m3) {
+    // FP8 E4M3 kernels (SM90)
+    // Template params: <Arch, T, kHeadDim, kHeadDimV, Split, PagedKVNonTMA, Has_softcap, PackGQA>
+    if (head_dim <= 64) {
+      run_mha_fwd_<90, cutlass::float_e4m3_t, 64, 64, false, false, false, false>(params, stream);
+    } else if (head_dim <= 128) {
+      run_mha_fwd_<90, cutlass::float_e4m3_t, 128, 128, false, false, false, false>(params, stream);
+    } else {
+      run_mha_fwd_<90, cutlass::float_e4m3_t, 256, 256, false, false, false, false>(params, stream);
+    }
   } else {
-    run_mha_fwd_<80, cutlass::half_t, 256, 256, false, false, false, true>(params, stream);
+    // FP16 kernels (SM80 compatible)
+    // Template params: <Arch, T, kHeadDim, kHeadDimV, Split, PagedKVNonTMA, Has_softcap, PackGQA>
+    if (head_dim <= 64) {
+      run_mha_fwd_<80, cutlass::half_t, 64, 64, false, false, false, true>(params, stream);
+    } else if (head_dim <= 96) {
+      run_mha_fwd_<80, cutlass::half_t, 96, 96, false, false, false, true>(params, stream);
+    } else if (head_dim <= 128) {
+      run_mha_fwd_<80, cutlass::half_t, 128, 128, false, false, false, true>(params, stream);
+    } else if (head_dim <= 192) {
+      run_mha_fwd_<80, cutlass::half_t, 192, 192, false, false, false, true>(params, stream);
+    } else {
+      run_mha_fwd_<80, cutlass::half_t, 256, 256, false, false, false, true>(params, stream);
+    }
   }
 }
 
@@ -288,6 +301,43 @@ void flash_attention_splitkv_paged_forward(
                      num_splits);
 
   run_splitkv(params, stream);
+}
+
+void flash_attention_fp8_forward(void* q_ptr, void* k_ptr, void* v_ptr, void* output_ptr,
+                                  float* q_descale_ptr, float* k_descale_ptr, float* v_descale_ptr,
+                                  int batch_size, int seqlen_q, int seqlen_k, int num_heads,
+                                  int num_heads_k, int head_dim, int q_batch_stride, int k_batch_stride,
+                                  int v_batch_stride, int o_batch_stride, int q_head_stride,
+                                  int k_head_stride, int v_head_stride, int o_head_stride,
+                                  int q_row_stride, int k_row_stride, int v_row_stride, int o_row_stride,
+                                  float softmax_scale, bool is_causal, int window_size_left,
+                                  int window_size_right, cudaStream_t stream) {
+  // Create params using the standard get_fwd_params function
+  // We pass nullptr for typed pointers since we're using void* for FP8
+  auto params = get_fwd_params(
+      nullptr, nullptr, nullptr, nullptr, batch_size, seqlen_q, seqlen_k, num_heads, num_heads_k,
+      head_dim, q_batch_stride, k_batch_stride, v_batch_stride, o_batch_stride, q_head_stride,
+      k_head_stride, v_head_stride, o_head_stride, q_row_stride, k_row_stride, v_row_stride,
+      o_row_stride, softmax_scale, is_causal, window_size_left, window_size_right);
+
+  // Override pointers with FP8 data
+  params.q_ptr = q_ptr;
+  params.k_ptr = k_ptr;
+  params.v_ptr = v_ptr;
+  params.o_ptr = output_ptr;
+
+  // Set FP8 descale pointers
+  params.q_descale_ptr = q_descale_ptr;
+  params.k_descale_ptr = k_descale_ptr;
+  params.v_descale_ptr = v_descale_ptr;
+
+  // Set FP8 flag
+  params.is_e4m3 = true;
+
+  int tile_count_semaphore = 0;
+  params.tile_count_semaphore = &tile_count_semaphore;
+
+  run(params, stream);
 }
 
 }  // namespace flash_attn

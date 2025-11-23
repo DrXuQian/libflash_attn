@@ -6,7 +6,10 @@
 #include <vector>
 
 #include "flash.h"
+#include "cutlass/numeric_types.h"
 
+// For FP8 testing
+using FP8Type = cutlass::float_e4m3_t;
 using HalfType = flash_attn::half;
 
 // Reference attention implementation for validation
@@ -70,8 +73,8 @@ void reference_attention(const HalfType* Q, const HalfType* K, const HalfType* V
     }
 }
 
-// Compute relative error
-float compute_relative_error(const HalfType* a, const HalfType* b, int size) {
+// Compute relative error (comparing FP8 output to FP16 reference)
+float compute_relative_error(const FP8Type* a, const HalfType* b, int size) {
     float max_diff = 0.0f;
     float max_val = 0.0f;
     int nan_count = 0;
@@ -99,7 +102,7 @@ float compute_relative_error(const HalfType* a, const HalfType* b, int size) {
 }
 
 void test_flash_attention() {
-    printf("=== Testing FP16 Flash Attention ===\n\n");
+    printf("=== Testing FP8 E4M3 Flash Attention ===\n\n");
 
     // Test configuration
     const int batch_size = 2;
@@ -125,10 +128,10 @@ void test_flash_attention() {
     const int v_size = batch_size * num_heads * seqlen_k * head_dim;
     const int o_size = batch_size * num_heads * seqlen_q * head_dim;
 
-    std::vector<HalfType> h_q(q_size);
-    std::vector<HalfType> h_k(k_size);
-    std::vector<HalfType> h_v(v_size);
-    std::vector<HalfType> h_o(o_size);
+    std::vector<FP8Type> h_q(q_size);
+    std::vector<FP8Type> h_k(k_size);
+    std::vector<FP8Type> h_v(v_size);
+    std::vector<FP8Type> h_o(o_size);
     std::vector<HalfType> h_o_ref(o_size);
 
     // Initialize with random values
@@ -137,24 +140,24 @@ void test_flash_attention() {
     std::normal_distribution<float> dist(0.0f, 1.0f);
 
     printf("Initializing random input data...\n");
-    for (int i = 0; i < q_size; i++) h_q[i] = static_cast<HalfType>(dist(gen) * 0.1f);
-    for (int i = 0; i < k_size; i++) h_k[i] = static_cast<HalfType>(dist(gen) * 0.1f);
-    for (int i = 0; i < v_size; i++) h_v[i] = static_cast<HalfType>(dist(gen) * 0.1f);
+    for (int i = 0; i < q_size; i++) h_q[i] = FP8Type(dist(gen) * 0.1f);
+    for (int i = 0; i < k_size; i++) h_k[i] = FP8Type(dist(gen) * 0.1f);
+    for (int i = 0; i < v_size; i++) h_v[i] = FP8Type(dist(gen) * 0.1f);
 
     // Allocate device memory
-    HalfType *d_q, *d_k, *d_v, *d_o;
-    cudaMalloc(&d_q, q_size * sizeof(HalfType));
-    cudaMalloc(&d_k, k_size * sizeof(HalfType));
-    cudaMalloc(&d_v, v_size * sizeof(HalfType));
-    cudaMalloc(&d_o, o_size * sizeof(HalfType));
+    FP8Type *d_q, *d_k, *d_v, *d_o;
+    cudaMalloc(&d_q, q_size * sizeof(FP8Type));
+    cudaMalloc(&d_k, k_size * sizeof(FP8Type));
+    cudaMalloc(&d_v, v_size * sizeof(FP8Type));
+    cudaMalloc(&d_o, o_size * sizeof(FP8Type));
 
     // Initialize output to test pattern
-    cudaMemset(d_o, 0xFF, o_size * sizeof(HalfType));
+    cudaMemset(d_o, 0xFF, o_size * sizeof(FP8Type));
 
     // Copy data to device
-    cudaMemcpy(d_q, h_q.data(), q_size * sizeof(HalfType), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_k, h_k.data(), k_size * sizeof(HalfType), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_v, h_v.data(), v_size * sizeof(HalfType), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_q, h_q.data(), q_size * sizeof(FP8Type), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k, h_k.data(), k_size * sizeof(FP8Type), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_v, h_v.data(), v_size * sizeof(FP8Type), cudaMemcpyHostToDevice);
 
     printf("Input data copied to device\n");
     printf("Q first 5 values: ");
@@ -180,14 +183,26 @@ void test_flash_attention() {
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
 
+    // Allocate and initialize descale factors (set to 1.0 for no scaling)
+    float *d_q_descale, *d_k_descale, *d_v_descale;
+    cudaMalloc(&d_q_descale, sizeof(float));
+    cudaMalloc(&d_k_descale, sizeof(float));
+    cudaMalloc(&d_v_descale, sizeof(float));
+
+    float descale_val = 1.0f;
+    cudaMemcpy(d_q_descale, &descale_val, sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k_descale, &descale_val, sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_v_descale, &descale_val, sizeof(float), cudaMemcpyHostToDevice);
+
     cudaStream_t stream = 0;
     cudaEventRecord(start, stream);
 
-    // Call Flash Attention
+    // Call FP8 Flash Attention
     {
-        printf("Calling flash_attention_forward...\n");
-        flash_attn::flash_attention_forward(
+        printf("Calling flash_attention_fp8_forward...\n");
+        flash_attn::flash_attention_fp8_forward(
             d_q, d_k, d_v, d_o,
+            d_q_descale, d_k_descale, d_v_descale,
             batch_size, seqlen_q, seqlen_k, num_heads, num_heads, head_dim,
             q_batch_stride, k_batch_stride, v_batch_stride, o_batch_stride,
             q_head_stride, k_head_stride, v_head_stride, o_head_stride,
@@ -221,11 +236,19 @@ void test_flash_attention() {
         printf("Flash Attention completed in %.3f ms\n", elapsed_ms);
 
         // Copy output back
-        cudaMemcpy(h_o.data(), d_o, o_size * sizeof(HalfType), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_o.data(), d_o, o_size * sizeof(FP8Type), cudaMemcpyDeviceToHost);
 
-        // Compute reference
+        // Compute reference using FP16 for better accuracy
         printf("\nComputing reference solution...\n");
-        reference_attention(h_q.data(), h_k.data(), h_v.data(), h_o_ref.data(),
+        // Convert FP8 to FP16 for reference
+        std::vector<HalfType> h_q_fp16(q_size);
+        std::vector<HalfType> h_k_fp16(k_size);
+        std::vector<HalfType> h_v_fp16(v_size);
+        for (int i = 0; i < q_size; i++) h_q_fp16[i] = static_cast<HalfType>(static_cast<float>(h_q[i]));
+        for (int i = 0; i < k_size; i++) h_k_fp16[i] = static_cast<HalfType>(static_cast<float>(h_k[i]));
+        for (int i = 0; i < v_size; i++) h_v_fp16[i] = static_cast<HalfType>(static_cast<float>(h_v[i]));
+
+        reference_attention(h_q_fp16.data(), h_k_fp16.data(), h_v_fp16.data(), h_o_ref.data(),
                            batch_size, num_heads, seqlen_q, seqlen_k, head_dim,
                            scale, is_causal);
 
@@ -247,8 +270,8 @@ void test_flash_attention() {
         }
         printf("\n");
 
-        // Validation
-        const float tolerance = 0.01f;
+        // Validation - FP8 has lower precision, so use higher tolerance
+        const float tolerance = 0.05f;  // 5% tolerance for FP8
         if (rel_error < tolerance) {
             printf("\n✓ TEST PASSED (relative error < %.3f)\n", tolerance);
         } else {
@@ -264,6 +287,9 @@ cleanup:
     cudaFree(d_k);
     cudaFree(d_v);
     cudaFree(d_o);
+    cudaFree(d_q_descale);
+    cudaFree(d_k_descale);
+    cudaFree(d_v_descale);
 }
 
 int main() {
